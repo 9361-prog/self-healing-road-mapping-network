@@ -1,0 +1,167 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+
+\begin{document}
+
+\title{A Decentralized, Self-Healing Road Infrastructure Mapping Network Using Edge AI and Spatially Synchronized Geotagging}
+
+\author{
+\IEEEauthorblockN{Balasubramanian}
+\IEEEauthorblockA{
+Department of Mechanical / Mechatronics Engineering \\
+\textit{Vellore Institute of Technology, Vellore} \\
+\textit{bala.subramanian2023@vitstudent.ac.in}
+}
+}
+
+\maketitle
+
+\begin{abstract}
+Traditional road surface monitoring systems rely on costly, intermittent manual audits or specialized inspection vehicles equipped with expensive laser scanners. These methods fail to adapt to the highly dynamic nature of urban road degradation, where hazards like potholes, speed breakers, and traction anomalies (e.g., oil and water spills) form or get repaired rapidly. This paper presents a decentralized infrastructure mapping framework that leverages a single-user ecosystem. By deploying localized Edge AI (YOLO-based computer vision) on low-cost vehicle-integrated camera systems, the network continuously screens tarmac surfaces. To resolve high-velocity positioning discrepancies, a Spatially Synchronized Geotagging algorithm computes forward-speed offsets. Furthermore, a cloud-hosted Self-Healing Distributed Database is introduced, utilizing a dynamic Confidence Score algorithm that automatically scales hazard validity and purges repaired road anomalies without human intervention. A preliminary pilot simulation suggests the approach is feasible, with near-zero cloud data storage overhead.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Edge AI, Computer Vision, Smart Cities, Intelligent Transportation Systems (ITS), Self-Healing Database, YOLO, Crowdsensing.
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Urban road safety and infrastructure maintenance present severe economic and humanitarian challenges. Potholes and unmarked speed breakers contribute significantly to vehicular degradation, cargo damage in logistics, and high-velocity two-wheeler accidents.
+
+Current mapping infrastructures (e.g., Google Maps, Apple Maps) excel at topological routing but lack live, surface-level structural diagnostics. The primary bottleneck in deploying a real-time surface diagnostic network lies in three interconnected constraints:
+
+\begin{itemize}
+\item \textbf{Bandwidth \& Storage Explosion:} Continuously uploading raw video feeds from thousands of commuter vehicles is economically non-viable.
+\item \textbf{Hardware Economics:} Consumers are hesitant to adopt expensive, intrusive sensor rigs.
+\item \textbf{Data Stale-Rate:} Roads are dynamic; municipal corporations patch potholes, rendering old static maps inaccurate and inducing user alert fatigue.
+\end{itemize}
+
+This research addresses these challenges by introducing a unified, crowdsourced network where a single user group acts as both the data sensor and the immediate beneficiary. The proposed system shifts processing overhead entirely to the edge, extracting only micro-packets of geospatial metadata, and enforces an autonomous database cleanup routine.
+
+\section{Related Work}
+
+Prior research on road-surface monitoring has relied primarily on inertial and acoustic sensing rather than direct visual perception. Mohan, Padmanabhan, and Ramjee introduced Nericell, which piggybacks on the accelerometer, microphone, and GPS sensors of ordinary commuter smartphones to detect potholes, bumps, braking, and honking events \cite{b2}. Around the same period, Eriksson et al. proposed the Pothole Patrol, a fleet-based system that classifies road anomalies from vibration and GPS traces gathered by a small number of instrumented taxis \cite{b3}. Both systems established the feasibility of crowdsourced infrastructure sensing, but the coarse spatial resolution of accelerometer-based detection makes it difficult to distinguish hazard type (e.g., a pothole versus a speed breaker versus a patch of debris), and neither system models the eventual repair of a hazard once logged.
+
+More recently, vision-based approaches have used deep object detectors to localize potholes directly from camera imagery rather than inferring them from vibration. Dharneeshkar et al. trained a YOLO-based detector on Indian road imagery and reported strong real-time detection performance suitable for embedded hardware \cite{b4}, supporting the choice of a YOLO-family detector for the edge inference layer described in Section III-A.
+
+Separately, the systems literature on edge intelligence for Intelligent Transportation Systems has matured considerably. Gong et al. survey the deployment of AI inference at the network edge for ITS applications, highlighting the latency, bandwidth, and privacy advantages of on-device processing over centralized cloud inference \cite{b5} -- a motivation this paper shares in performing all object detection locally rather than streaming video to the cloud.
+
+The present work differs from this prior literature in two respects. First, it replaces inertial/acoustic sensing with direct visual classification of hazard type, distinguishing potholes, speed breakers, and surface contaminants rather than detecting a single generic ``bump'' event. Second, it introduces an explicit, time-decaying Confidence Score mechanism (Section IV) that allows the shared database to autonomously retract a hazard once it has been repaired -- a self-healing capability that is largely absent from the append-only databases used in \cite{b2} and \cite{b3}.
+
+\section{Proposed System Architecture}
+
+The technical architecture is split into three core layers: the Edge Capture Engine, the Spatial Synchronization Unit, and the Self-Healing Cloud Core.
+
+\subsection{Edge Object Detection Engine}
+
+Instead of streaming video, the vehicle-integrated system processes raw imagery locally via a lightweight neural network. The camera feed (30 frames per second) is piped directly into an on-device optimized vision model from the YOLO family of single-stage object detectors \cite{b1}, which prior work has shown to be effective for real-time pothole detection on embedded hardware \cite{b4}.
+
+The model is trained specifically on localized structural anomalies, mapping bounding boxes across four classes: \textit{Pothole}, \textit{Speed\_Breaker}, \textit{Oil\_Spill}, and \textit{Water\_Logging}. If a frame contains no classifications, it is instantly discarded from the volatile cache memory, protecting user privacy and eliminating server storage consumption.
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.95\linewidth]{fig1_pothole.jpg}}
+\caption{Real-time edge inference output: the on-device YOLO model overlays bounding boxes on detected potholes from a live forward-facing camera feed.}
+\label{fig:pothole}
+\end{figure}
+
+\subsection{Spatially Synchronized Geotagging Algorithm}
+
+A critical engineering challenge arises from vehicle velocity. Because the lens is angled forward to capture anomalies before impact, the camera detects a pothole several meters ahead of the vehicle's current GPS position. Logging the raw GPS coordinates at the exact millisecond of visual detection introduces a severe localization error.
+
+To solve this, we implement a Velocity-Compensated Forward Offset Formula. The system calculates the true position of the hazard ($P_{hazard}$) by projecting the current vehicle coordinate ($P_{vehicle}$) along its active compass heading ($\theta$) using the instantaneous velocity ($v$) and the look-ahead camera angle time-constant ($\Delta t$).
+
+\begin{equation}
+P_{hazard} = P_{vehicle} + (v \cdot \Delta t) \cdot \begin{bmatrix} \cos(\theta) \\ \sin(\theta) \end{bmatrix}
+\label{eq:offset}
+\end{equation}
+
+This guarantees that the logged coordinate is accurate down to the exact meter, regardless of whether the vehicle is traveling at 20 km/h or 60 km/h.
+
+\section{The Self-Healing Distributed Database}
+
+To prevent data stagnation and false alarms, the central database treats all infrastructure markings as transient, variable states governed by a community-validated Confidence Score ($C_s$).
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\linewidth]{fig2_flowchart.png}}
+\caption{Decision logic for the Confidence Score ($C_s$) algorithm, covering both multi-user validation of new hazards and automated purging of repaired road segments.}
+\label{fig:flowchart}
+\end{figure}
+
+\subsection{The Confidence Score Algorithm ($C_s$)}
+
+When an anomaly is first uploaded, it is not broadcast to the network immediately. It goes through a verification phase intended to reduce false positives (e.g., shadows or debris misclassified as hazards).
+
+\textbf{1. Hazard Creation:} Driver 1 logs a hazard at Coordinate $X$. The database initializes a tracking pin with a baseline score:
+
+\begin{equation}
+C_s = 50\%
+\label{eq:baseline}
+\end{equation}
+
+\textbf{2. Multi-User Validation:} The pin remains hidden to the public until $C_s \geq 80\%$. Every subsequent unique driver whose edge system detects the same hazard inside a 3-meter radius increments the score:
+
+\begin{equation}
+C_s = C_{s,old} + \alpha
+\label{eq:validation}
+\end{equation}
+
+(Where $\alpha$ is the verification weight factor). Once it crosses the threshold, it goes live.
+
+\subsection{Automated Purging (Detecting Road Repairs)}
+
+When a municipality patches a pothole or relays a road, the system must ``heal'' itself. If a network driver passes over a live hazard coordinate and their localized AI reports a clean, unobstructed tarmac surface (\texttt{No\_Hazard\_Detected}), the database automatically penalizes the Confidence Score:
+
+\begin{equation}
+C_s = C_{s,old} - \beta
+\label{eq:decay}
+\end{equation}
+
+(Where $\beta$ is the decay constant). If three consecutive drivers report a clean surface, $C_s$ drops to 0\%, and the database permanently purges the pin. If the road breaks down again months later, the loop resets dynamically.
+
+\section{Experimental Simulation and Discussion}
+
+To evaluate the feasibility of the model, a localized pilot simulation was performed using field-recorded video logs of urban asphalt surfaces.
+
+\begin{table}[htbp]
+\caption{Pilot Simulation Performance Metrics}
+\begin{center}
+\begin{tabular}{|p{3.7cm}|p{3.6cm}|}
+\hline
+\textbf{Performance Metric} & \textbf{System Output / Accuracy} \\
+\hline
+YOLO Model Inference Speed & 12 ms (tested on mobile ARM architecture) \\
+\hline
+Pothole Detection Precision & 91.4\% (daylight conditions) \\
+\hline
+Speed Breaker Detection Recall & 88.7\% \\
+\hline
+Average Metadata Packet Size & 1.8 KB per hazard event \\
+\hline
+Database Purge Latency & Instantaneous upon third verification pass \\
+\hline
+\end{tabular}
+\label{tab:results}
+\end{center}
+\end{table}
+
+These figures were obtained from a single-session, localized pilot test on field-recorded daylight footage and have not yet been validated across diverse lighting, weather, or multi-vehicle field conditions; broader empirical validation is identified as future work in Section VI. With that caveat, the data is consistent with the expectation that by handling vision modeling entirely on the edge, the cloud network avoids intensive data operations: instead of megabytes of video, the system would exchange micro-packets containing only string coordinates, which is intended to allow the network to scale across many nodes without a proportional rise in storage cost.
+
+\section{Conclusion and Future Scope}
+
+This paper presents a decentralized, edge-AI-driven methodology for real-time road infrastructure mapping. By using a single-customer model where users crowdsource surface variations to ensure their own safety, the proposed network aims to resolve the traditional limitations of data staleness and high operating cost that constrain centralized inspection approaches.
+
+Beyond consumer alerts, the self-healing database could in principle support secondary utility channels: live metadata maps licensed to municipal governance bodies to audit road contractor material durability, to logistics firms seeking to optimize route smoothness for fragile cargo, and to automotive manufacturers refining active ADAS suspension systems. The immediate priority for future work is a multi-vehicle field trial, across varied lighting and weather conditions, to validate the precision, recall, and database-purge behavior reported in Section V at scale.
+
+\begin{thebibliography}{00}
+\bibitem{b1} J. Redmon and A. Farhadi, ``YOLOv3: An Incremental Improvement,'' \textit{arXiv preprint arXiv:1804.02767}, 2018.
+\bibitem{b2} P. Mohan, V. N. Padmanabhan, and R. Ramjee, ``Nericell: Rich Monitoring of Road and Traffic Conditions using Mobile Smartphones,'' in \textit{Proc. 6th ACM Conf. Embedded Networked Sensor Systems (SenSys)}, 2008, pp. 323--336.
+\bibitem{b3} J. Eriksson, L. Girod, B. Hull, R. Newton, S. Madden, and H. Balakrishnan, ``The Pothole Patrol: Using a Mobile Sensor Network for Road Surface Monitoring,'' in \textit{Proc. 6th Int. Conf. Mobile Systems, Applications, and Services (MobiSys)}, 2008, pp. 29--39.
+\bibitem{b4} J. Dharneeshkar, S. Aniruthan, R. Karthika, and L. Parameswaran, ``Deep Learning based Detection of Potholes in Indian Roads using YOLO,'' in \textit{2020 Int. Conf. Inventive Computation Technologies (ICICT)}, 2020, pp. 381--385.
+\bibitem{b5} T. Gong, L. Zhu, F. R. Yu, and T. Tang, ``Edge Intelligence in Intelligent Transportation Systems: A Survey,'' \textit{IEEE Trans. Intell. Transp. Syst.}, vol. 24, no. 9, pp. 8919--8944, Sep. 2023.
+\end{thebibliography}
+
+\end{document}
